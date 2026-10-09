@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Tobi 3D - Prototype PoC</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #1a1a1a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    #ui-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+    }
+    .hud-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand {
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: 1px;
+      opacity: 0.8;
+    }
+    .hud-badge {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      color: #00ffcc;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid rgba(0, 255, 204, 0.2);
+    }
+  </style>
+  <!-- Dependencias externas CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+</head>
+<body>
+
+  <div id="canvas-container"></div>
+
+  <div id="ui-layer">
+    <div class="hud-top">
+      <div class="brand">TOBI <span style="font-size: 11px; font-weight: 300;">3D</span></div>
+      <div id="view-mode-badge" class="hud-badge">PERSPECTIVA LIBRE</div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. SCENE SETUP
+    // ==========================================
+    class TobiApp {
+      constructor() {
+        this.container = document.getElementById('canvas-container');
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+
+        this.scene = null;
+        this.renderer = null;
+        this.perspectiveCamera = null;
+        this.orthographicCamera = null;
+        this.activeCamera = null;
+        this.controls = null;
+        this.gridHelper = null;
+
+        this.init();
+      }
+
+      init() {
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x1a1a1a);
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        this.renderer.setSize(this.width, this.height);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.container.appendChild(this.renderer.domElement);
+
+        const aspect = this.width / this.height;
+        this.perspectiveCamera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+        this.perspectiveCamera.position.set(5, 5, 8);
+
+        const frustumSize = 10;
+        this.orthographicCamera = new THREE.OrthographicCamera(
+          (frustumSize * aspect) / -2,
+          (frustumSize * aspect) / 2,
+          frustumSize / 2,
+          frustumSize / -2,
+          0.1,
+          1000
+        );
+        this.orthographicCamera.position.set(0, 0, 10);
+        this.activeCamera = this.perspectiveCamera;
+
+        this.controls = new THREE.OrbitControls(this.activeCamera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.maxPolarAngle = Math.PI / 2 + 0.1;
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        this.scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        this.scene.add(dirLight);
+
+        this.setupGrid();
+
+        window.addEventListener('resize', () => this.onWindowResize());
+        this.animate();
+      }
+
+      setupGrid() {
+        const size = 20;
+        const divisions = 20;
+        this.gridHelper = new THREE.GridHelper(size, divisions, 0x00ffcc, 0x333333);
+        this.gridHelper.position.y = -0.01;
+        this.scene.add(this.gridHelper);
+
+        const planeGeo = new THREE.PlaneGeometry(size, size);
+        const planeMat = new THREE.ShadowMaterial({ opacity: 0.15 });
+        const shadowFloor = new THREE.Mesh(planeGeo, planeMat);
+        shadowFloor.rotation.x = -Math.PI / 2;
+        shadowFloor.receiveShadow = true;
+        this.scene.add(shadowFloor);
+
+        const axesHelper = new THREE.AxesHelper(1.5);
+        this.scene.add(axesHelper);
+      }
+
+      onWindowResize() {
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+        const aspect = this.width / this.height;
+
+        this.perspectiveCamera.aspect = aspect;
+        this.perspectiveCamera.updateProjectionMatrix();
+
+        const frustumSize = 10;
+        this.orthographicCamera.left = (frustumSize * aspect) / -2;
+        this.orthographicCamera.right = (frustumSize * aspect) / 2;
+        this.orthographicCamera.top = frustumSize / 2;
+        this.orthographicCamera.bottom = frustumSize / -2;
+        this.orthographicCamera.updateProjectionMatrix();
+
+        this.renderer.setSize(this.width, this.height);
+      }
+
+      animate() {
+        requestAnimationFrame(() => this.animate());
+        if (this.controls) this.controls.update();
+        this.renderer.render(this.scene, this.activeCamera);
+      }
+    }
+
+    // ==========================================
+    // 2. VIEWCUBE CONTROLLER
+    // ==========================================
+    class ViewCube {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.isTransitioning = false;
+        this.currentViewMode = 'PERSPECTIVE';
+        this.createUI();
+      }
+
+      createUI() {
+        const container = document.createElement('div');
+        container.id = 'view-cube-container';
+        container.innerHTML = `
+          <style>
+            #view-cube-container {
+              position: absolute;
+              top: 16px;
+              right: 16px;
+              width: 110px;
+              pointer-events: auto;
+              display: flex;
+              flex-direction: column;
+              gap: 6px;
+              align-items: flex-end;
+            }
+            .view-btn-group {
+              display: grid;
+              grid-template-columns: repeat(2, 1fr);
+              gap: 4px;
+              width: 100%;
+            }
+            .view-btn {
+              background: rgba(30, 30, 30, 0.75);
+              backdrop-filter: blur(12px);
+              border: 1px solid rgba(255, 255, 255, 0.15);
+              color: #ffffff;
+              padding: 8px 4px;
+              font-size: 10px;
+              font-weight: 700;
+              letter-spacing: 0.5px;
+              border-radius: 6px;
+              cursor: pointer;
+              text-align: center;
+              transition: all 0.2s ease;
+            }
+            .view-btn:hover { background: rgba(0, 255, 204, 0.2); border-color: #00ffcc; color: #00ffcc; }
+            .view-btn.active { background: #00ffcc; color: #1a1a1a; border-color: #00ffcc; box-shadow: 0 0 10px rgba(0, 255, 204, 0.4); }
+            .reset-btn { width: 100%; grid-column: span 2; background: rgba(255, 255, 255, 0.05); }
+          </style>
+          <div class="view-btn-group">
+            <button class="view-btn" id="btn-front">FRENTE</button>
+            <button class="view-btn" id="btn-right">PERFIL</button>
+            <button class="view-btn" id="btn-top">PLANTA</button>
+            <button class="view-btn reset-btn active" id="btn-3d">3D LIBRE</button>
+          </div>
+        `;
+        document.getElementById('ui-layer').appendChild(container);
+
+        document.getElementById('btn-front').addEventListener('click', () => this.setView('FRONT'));
+        document.getElementById('btn-right').addEventListener('click', () => this.setView('RIGHT'));
+        document.getElementById('btn-top').addEventListener('click', () => this.setView('TOP'));
+        document.getElementById('btn-3d').addEventListener('click', () => this.setView('PERSPECTIVE'));
+      }
+
+      setView(mode) {
+        if (this.isTransitioning || this.currentViewMode === mode) return;
+        this.currentViewMode = mode;
+        this.updateUI();
+
+        const targetPos = new THREE.Vector3();
+        const targetLookAt = new THREE.Vector3(0, 0, 0);
+        const distance = 12;
+        let useOrthographic = true;
+
+        switch (mode) {
+          case 'FRONT': targetPos.set(0, 0, distance); break;
+          case 'RIGHT': targetPos.set(distance, 0, 0); break;
+          case 'TOP': targetPos.set(0, distance, 0.0001); break;
+          case 'PERSPECTIVE': targetPos.set(6, 6, 9); useOrthographic = false; break;
+        }
+
+        this.animateCameraTransition(targetPos, targetLookAt, useOrthographic, mode);
+      }
+
+      animateCameraTransition(targetPosition, targetLookAt, useOrthographic, modeLabel) {
+        this.isTransitioning = true;
+        const duration = 400;
+        const startTime = performance.now();
+        const startPosition = this.app.activeCamera.position.clone();
+        const badgeEl = document.getElementById('view-mode-badge');
+
+        if (useOrthographic && this.app.activeCamera !== this.app.orthographicCamera) {
+          this.app.orthographicCamera.position.copy(this.app.perspectiveCamera.position);
+          this.app.activeCamera = this.app.orthographicCamera;
+        } else if (!useOrthographic && this.app.activeCamera !== this.app.perspectiveCamera) {
+          this.app.perspectiveCamera.position.copy(this.app.orthographicCamera.position);
+          this.app.activeCamera = this.app.perspectiveCamera;
+        }
+
+        this.app.controls.object = this.app.activeCamera;
+        this.app.controls.enableRotate = !useOrthographic;
+
+        const animateStep = (currentTime) => {
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          const easeProgress = 1 - Math.pow(1 - progress, 3);
+
+          this.app.activeCamera.position.lerpVectors(startPosition, targetPosition, easeProgress);
+          this.app.controls.target.set(0, 0, 0);
+          this.app.controls.update();
+
+          if (progress < 1) {
+            requestAnimationFrame(animateStep);
+          } else {
+            this.isTransitioning = false;
+            if (badgeEl) badgeEl.innerText = modeLabel === 'PERSPECTIVE' ? 'PERSPECTIVA LIBRE' : `VISTA: ${modeLabel}`;
+          }
+        };
+
+        requestAnimationFrame(animateStep);
+      }
+
+      updateUI() {
+        const buttons = {
+          'FRONT': document.getElementById('btn-front'),
+          'RIGHT': document.getElementById('btn-right'),
+          'TOP': document.getElementById('btn-top'),
+          'PERSPECTIVE': document.getElementById('btn-3d')
+        };
+        Object.keys(buttons).forEach(key => {
+          if (buttons[key]) {
+            if (key === this.currentViewMode) buttons[key].classList.add('active');
+            else buttons[key].classList.remove('active');
+          }
+        });
+      }
+    }
+
+    // ==========================================
+    // 3. STROKE ENGINE
+    // ==========================================
+    class StrokeEngine {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.isDrawing = false;
+        this.raycaster = new THREE.Raycaster();
+        this.mouse = new THREE.Vector2();
+        this.currentPoints = [];
+        this.currentLineMesh = null;
+        this.activePlane = new THREE.Plane();
+        this.initEvents();
+      }
+
+      initEvents() {
+        const dom = this.app.renderer.domElement;
+        dom.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+        dom.addEventListener('pointermove', (e) => this.onPointerMove(e));
+        dom.addEventListener('pointerup', () => this.onPointerUp());
+        dom.addEventListener('pointerleave', () => this.onPointerUp());
+      }
+
+      updateActivePlane() {
+        const viewMode = this.app.viewCube ? this.app.viewCube.currentViewMode : 'PERSPECTIVE';
+        const camera = this.app.activeCamera;
+
+        switch (viewMode) {
+          case 'FRONT': this.activePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0)); break;
+          case 'RIGHT': this.activePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0)); break;
+          case 'TOP': this.activePlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0)); break;
+          case 'PERSPECTIVE':
+          default:
+            const normal = new THREE.Vector3();
+            camera.getWorldDirection(normal);
+            normal.negate();
+            this.activePlane.setFromNormalAndCoplanarPoint(normal, new THREE.Vector3(0, 0, 0));
+            break;
+        }
+      }
+
+      getIntersectionPoint(event) {
+        this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        this.raycaster.setFromCamera(this.mouse, this.app.activeCamera);
+
+        const intersectionPoint = new THREE.Vector3();
+        const hit = this.raycaster.ray.intersectPlane(this.activePlane, intersectionPoint);
+        
+        const point = hit ? intersectionPoint : null;
+        return (this.app.smartSnapping && point) ? this.app.smartSnapping.processPoint(point) : point;
+      }
+
+      onPointerDown(event) {
+        if (event.button !== 0 && event.pointerType === 'mouse') return;
+        if (this.app.eraserTool && this.app.eraserTool.activeMode === 'ERASE') return;
+
+        this.updateActivePlane();
+        const point = this.getIntersectionPoint(event);
+
+        if (point) {
+          this.isDrawing = true;
+          this.currentPoints = [point];
+          if (this.app.controls) this.app.controls.enabled = false;
+        }
+      }
+
+      onPointerMove(event) {
+        if (!this.isDrawing) return;
+
+        if (this.app.modifierButton && this.app.modifierButton.isPressed && this.currentPoints.length >= 2) {
+          const firstPoint = this.currentPoints[0];
+          const lastPoint = this.getIntersectionPoint(event);
+          if (lastPoint) {
+            const dx = Math.abs(lastPoint.x - firstPoint.x);
+            const dy = Math.abs(lastPoint.y - firstPoint.y);
+            const dz = Math.abs(lastPoint.z - firstPoint.z);
+
+            if (dx > dy && dx > dz) { lastPoint.y = firstPoint.y; lastPoint.z = firstPoint.z; }
+            else if (dy > dx && dy > dz) { lastPoint.x = firstPoint.x; lastPoint.z = firstPoint.z; }
+            else { lastPoint.x = firstPoint.x; lastPoint.y = firstPoint.y; }
+
+            this.currentPoints[this.currentPoints.length - 1] = lastPoint;
+            this.updateRibbonMesh();
+            return;
+          }
+        }
+
+        const point = this.getIntersectionPoint(event);
+        if (point) {
+          const lastPoint = this.currentPoints[this.currentPoints.length - 1];
+          if (lastPoint && lastPoint.distanceTo(point) > 0.05) {
+            this.currentPoints.push(point);
+            this.updateRibbonMesh();
+          }
+        }
+      }
+
+      onPointerUp() {
+        if (!this.isDrawing) return;
+        this.isDrawing = false;
+        this.currentPoints = [];
+        this.currentLineMesh = null;
+        if (this.app.controls) this.app.controls.enabled = true;
+      }
+
+      updateRibbonMesh() {
+        if (this.currentPoints.length < 2) return;
+
+        const brushSettings = this.app.brushSettings;
+        const strokeRadius = brushSettings ? brushSettings.currentSize : 0.08;
+        const strokeColor = brushSettings ? brushSettings.currentColor : '#00ffcc';
+
+        const curve = new THREE.CatmullRomCurve3(this.currentPoints);
+        const tubeGeometry = new THREE.TubeGeometry(
+          curve,
+          Math.max(this.currentPoints.length * 3, 12),
+          strokeRadius,
+          8,
+          false
+        );
+
+        if (!this.currentLineMesh) {
+          const material = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(strokeColor),
+            roughness: 0.3,
+            metalness: 0.1,
+            side: THREE.DoubleSide
+          });
+          this.currentLineMesh = new THREE.Mesh(tubeGeometry, material);
+          this.currentLineMesh.castShadow = true;
+          this.currentLineMesh.receiveShadow = true;
+          this.app.scene.add(this.currentLineMesh);
+        } else {
+          this.currentLineMesh.geometry.dispose();
+          this.currentLineMesh.geometry = tubeGeometry;
+        }
+      }
+    }
+
+    // ==========================================
+    // 4. REFERENCE SCALE MANNEQUIN
+    // ==========================================
+    class ReferenceScale {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.mannequinGroup = new THREE.Group();
+        this.isVisible = true;
+        this.buildMannequin();
+        this.createUI();
+      }
+
+      buildMannequin() {
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x555555, roughness: 0.8, metalness: 0.1, transparent: true, opacity: 0.65
+        });
+
+        const headGeo = new THREE.SphereGeometry(0.12, 16, 16);
+        const head = new THREE.Mesh(headGeo, material);
+        head.position.y = 1.63; head.castShadow = true;
+        this.mannequinGroup.add(head);
+
+        const torsoGeo = new THREE.CylinderGeometry(0.18, 0.12, 0.6, 12);
+        const torso = new THREE.Mesh(torsoGeo, material);
+        torso.position.y = 1.2; torso.castShadow = true;
+        this.mannequinGroup.add(torso);
+
+        const pelvisGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.2, 12);
+        const pelvis = new THREE.Mesh(pelvisGeo, material);
+        pelvis.position.y = 0.8; pelvis.castShadow = true;
+        this.mannequinGroup.add(pelvis);
+
+        const legGeo = new THREE.CylinderGeometry(0.05, 0.04, 0.7, 8);
+        const leftLeg = new THREE.Mesh(legGeo, material);
+        leftLeg.position.set(-0.08, 0.35, 0); leftLeg.castShadow = true;
+        this.mannequinGroup.add(leftLeg);
+
+        const rightLeg = new THREE.Mesh(legGeo, material);
+        rightLeg.position.set(0.08, 0.35, 0); rightLeg.castShadow = true;
+        this.mannequinGroup.add(rightLeg);
+
+        const boxGeo = new THREE.BoxGeometry(0.8, 1.75, 0.8);
+        const wireframe = new THREE.WireframeGeometry(boxGeo);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.15 });
+        const bboxLines = new THREE.LineSegments(wireframe, lineMat);
+        bboxLines.position.y = 1.75 / 2;
+        this.mannequinGroup.add(bboxLines);
+
+        this.app.scene.add(this.mannequinGroup);
+      }
+
+      createUI() {
+        const btnContainer = document.createElement('div');
+        btnContainer.id = 'scale-toggle-container';
+        btnContainer.innerHTML = `
+          <style>
+            #scale-toggle-container { position: absolute; bottom: 16px; right: 16px; pointer-events: auto; }
+            .hud-btn {
+              background: rgba(30, 30, 30, 0.75); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.15);
+              color: #ffffff; padding: 8px 12px; font-size: 11px; font-weight: 600; border-radius: 20px; cursor: pointer;
+              transition: all 0.2s ease; display: flex; align-items: center; gap: 6px;
+            }
+            .hud-btn:hover { border-color: #00ffcc; color: #00ffcc; }
+            .hud-btn.active { border-color: #00ffcc; background: rgba(0, 255, 204, 0.15); color: #00ffcc; }
+          </style>
+          <button class="hud-btn active" id="btn-toggle-scale"><span>👤</span> Escala Humana (1.75m)</button>
+        `;
+        document.getElementById('ui-layer').appendChild(btnContainer);
+
+        document.getElementById('btn-toggle-scale').addEventListener('click', (e) => {
+          this.isVisible = !this.isVisible;
+          this.mannequinGroup.visible = this.isVisible;
+          if (this.isVisible) e.currentTarget.classList.add('active');
+          else e.currentTarget.classList.remove('active');
+        });
+      }
+    }
+
+    // ==========================================
+    // 5. RAYCAST PLANE PREVIEW
+    // ==========================================
+    class RaycastPlanePreview {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.planeHelperGroup = new THREE.Group();
+        this.gridMesh = null;
+        this.ringMesh = null;
+        this.buildPreviewDisc();
+        this.initEvents();
+      }
+
+      buildPreviewDisc() {
+        const radius = 1.2;
+        const gridDivisions = 8;
+
+        const gridGeo = new THREE.WireframeGeometry(new THREE.CircleGeometry(radius, gridDivisions * 2));
+        const gridMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.25, depthTest: false });
+        this.gridMesh = new THREE.LineSegments(gridGeo, gridMat);
+        this.planeHelperGroup.add(this.gridMesh);
+
+        const ringGeo = new THREE.RingGeometry(radius - 0.02, radius, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, side: THREE.DoubleSide, transparent: true, opacity: 0.4, depthTest: false });
+        this.ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        this.planeHelperGroup.add(this.ringMesh);
+
+        this.planeHelperGroup.visible = false;
+        this.app.scene.add(this.planeHelperGroup);
+      }
+
+      initEvents() {
+        const dom = this.app.renderer.domElement;
+        dom.addEventListener('pointermove', (e) => this.updatePreview(e));
+        dom.addEventListener('pointerleave', () => { this.planeHelperGroup.visible = false; });
+      }
+
+      updatePreview(event) {
+        if (!this.app.strokeEngine) return;
+        this.app.strokeEngine.updateActivePlane();
+        const plane = this.app.strokeEngine.activePlane;
+        const point = this.app.strokeEngine.getIntersectionPoint(event);
+
+        if (point) {
+          this.planeHelperGroup.position.copy(point);
+          const normal = plane.normal.clone();
+          const defaultNormal = new THREE.Vector3(0, 0, 1);
+          const quaternion = new THREE.Quaternion();
+          quaternion.setFromUnitVectors(defaultNormal, normal);
+          this.planeHelperGroup.quaternion.copy(quaternion);
+
+          const isDrawing = this.app.strokeEngine.isDrawing;
+          this.gridMesh.material.opacity = isDrawing ? 0.5 : 0.25;
+          this.ringMesh.material.opacity = isDrawing ? 0.8 : 0.4;
+          this.planeHelperGroup.visible = true;
+        } else {
+          this.planeHelperGroup.visible = false;
+        }
+      }
+    }
+
+    // ==========================================
+    // 6. SMART SNAPPING
+    // ==========================================
+    class SmartSnapping {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.snapThreshold = 0.35;
+        this.snapIndicator = null;
+        this.buildSnapIndicator();
+      }
+
+      buildSnapIndicator() {
+        const geo = new THREE.SphereGeometry(0.1, 16, 16);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.9, depthTest: false });
+        this.snapIndicator = new THREE.Mesh(geo, mat);
+
+        const ringGeo = new THREE.RingGeometry(0.12, 0.16, 24);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xff0055, side: THREE.DoubleSide, transparent: true, opacity: 0.6, depthTest: false });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        this.snapIndicator.add(ring);
+
+        this.snapIndicator.visible = false;
+        this.app.scene.add(this.snapIndicator);
+      }
+
+      findClosestSnapPoint(cursorPoint) {
+        if (!cursorPoint) return null;
+        let minDistance = Infinity;
+        let closestPoint = null;
+
+        this.app.scene.traverse((child) => {
+          if (child.isMesh && child !== this.app.strokeEngine.currentLineMesh && child.geometry) {
+            const positions = child.geometry.attributes.position;
+            if (positions) {
+              const vertex = new THREE.Vector3();
+              for (let i = 0; i < positions.count; i += 3) {
+                vertex.fromBufferAttribute(positions, i);
+                child.localToWorld(vertex);
+                const dist = cursorPoint.distanceTo(vertex);
+                if (dist < minDistance && dist <= this.snapThreshold) {
+                  minDistance = dist;
+                  closestPoint = vertex.clone();
+                }
+              }
+            }
+          }
+        });
+        return closestPoint;
+      }
+
+      processPoint(rawPoint) {
+        if (!rawPoint) { this.snapIndicator.visible = false; return rawPoint; }
+        const snapPoint = this.findClosestSnapPoint(rawPoint);
+        if (snapPoint) {
+          this.snapIndicator.position.copy(snapPoint);
+          this.snapIndicator.visible = true;
+          return snapPoint;
+        } else {
+          this.snapIndicator.visible = false;
+          return rawPoint;
+        }
+      }
+    }
+
+    // ==========================================
+    // 7. ERASER TOOL
+    // ==========================================
+    class EraserTool {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.activeMode = 'DRAW';
+        this.raycaster = new THREE.Raycaster();
+        this.mouse = new THREE.Vector2();
+        this.hoveredMesh = null;
+        this.originalColor = new THREE.Color();
+        this.initUI();
+        this.initEvents();
+      }
+
+      initUI() {
+        const toolbar = document.createElement('div');
+        toolbar.id = 'tobi-toolbar';
+        toolbar.innerHTML = `
+          <style>
+            #tobi-toolbar {
+              position: absolute; bottom: 16px; left: 16px; pointer-events: auto; display: flex; gap: 8px;
+              background: rgba(30, 30, 30, 0.75); backdrop-filter: blur(12px); padding: 6px; border-radius: 25px;
+              border: 1px solid rgba(255, 255, 255, 0.15);
+            }
+            .tool-btn {
+              background: transparent; border: none; color: #ffffff; padding: 8px 14px; font-size: 12px; font-weight: 600;
+              border-radius: 20px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 6px;
+            }
+            .tool-btn:hover { color: #00ffcc; }
+            .tool-btn.active { background: #00ffcc; color: #1a1a1a; box-shadow: 0 0 10px rgba(0, 255, 204, 0.3); }
+          </style>
+          <button class="tool-btn active" id="btn-mode-draw"><span>✏️</span> Pincel</button>
+          <button class="tool-btn" id="btn-mode-erase"><span>🧹</span> Borrador</button>
+        `;
+        document.getElementById('ui-layer').appendChild(toolbar);
+
+        document.getElementById('btn-mode-draw').addEventListener('click', () => this.setMode('DRAW'));
+        document.getElementById('btn-mode-erase').addEventListener('click', () => this.setMode('ERASE'));
+      }
+
+      setMode(mode) {
+        this.activeMode = mode;
+        const btnDraw = document.getElementById('btn-mode-draw');
+        const btnErase = document.getElementById('btn-mode-erase');
+        if (mode === 'DRAW') {
+          btnDraw.classList.add('active'); btnErase.classList.remove('active');
+          this.clearHighlight();
+        } else {
+          btnErase.classList.add('active'); btnDraw.classList.remove('active');
+        }
+      }
+
+      initEvents() {
+        const dom = this.app.renderer.domElement;
+        dom.addEventListener('pointermove', (e) => this.onPointerMove(e));
+        dom.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+      }
+
+      getIntersectedStroke(event) {
+        this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        this.raycaster.setFromCamera(this.mouse, this.app.activeCamera);
+
+        const strokes = [];
+        this.app.scene.traverse((child) => {
+          if (child.isMesh && child.geometry && child.geometry.type === 'TubeGeometry') strokes.push(child);
+        });
+
+        const intersects = this.raycaster.intersectObjects(strokes, false);
+        return intersects.length > 0 ? intersects[0].object : null;
+      }
+
+      onPointerMove(event) {
+        if (this.activeMode !== 'ERASE' || (this.app.strokeEngine && this.app.strokeEngine.isDrawing)) return;
+        const hitMesh = this.getIntersectedStroke(event);
+        if (hitMesh !== this.hoveredMesh) {
+          this.clearHighlight();
+          if (hitMesh) {
+            this.hoveredMesh = hitMesh;
+            this.originalColor.copy(hitMesh.material.color);
+            hitMesh.material.color.setHex(0xff0055);
+          }
+        }
+      }
+
+      onPointerDown(event) {
+        if (this.activeMode !== 'ERASE') return;
+        const hitMesh = this.getIntersectedStroke(event);
+        if (hitMesh) {
+          this.app.scene.remove(hitMesh);
+          if (hitMesh.geometry) hitMesh.geometry.dispose();
+          if (hitMesh.material) hitMesh.material.dispose();
+          this.hoveredMesh = null;
+        }
+      }
+
+      clearHighlight() {
+        if (this.hoveredMesh) {
+          this.hoveredMesh.material.color.copy(this.originalColor);
+          this.hoveredMesh = null;
+        }
+      }
+    }
+
+    // ==========================================
+    // 8. BRUSH SETTINGS
+    // ==========================================
+    class BrushSettings {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.currentColor = '#00ffcc';
+        this.currentSize = 0.08;
+        this.paletteColors = ['#00ffcc', '#ff0055', '#ffcc00', '#7000ff', '#ffffff', '#1a1a1a'];
+        this.initUI();
+      }
+
+      initUI() {
+        const panel = document.createElement('div');
+        panel.id = 'brush-settings-panel';
+        panel.innerHTML = `
+          <style>
+            #brush-settings-panel {
+              position: absolute; left: 16px; top: 80px; pointer-events: auto; display: flex; flex-direction: column; gap: 12px;
+              background: rgba(30, 30, 30, 0.75); backdrop-filter: blur(12px); padding: 12px; border-radius: 16px;
+              border: 1px solid rgba(255, 255, 255, 0.15); width: 160px;
+            }
+            .section-title { color: #888888; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+            .color-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+            .color-swatch { width: 32px; height: 32px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform 0.15s ease, border-color 0.15s ease; }
+            .color-swatch:hover { transform: scale(1.1); }
+            .color-swatch.active { border-color: #ffffff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.5); }
+            .size-control { display: flex; flex-direction: column; gap: 6px; }
+            .size-slider { -webkit-appearance: none; width: 100%; height: 4px; border-radius: 2px; background: #444444; outline: none; }
+            .size-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #00ffcc; cursor: pointer; }
+            .size-val-preview { display: flex; justify-content: space-between; color: #ffffff; font-size: 11px; }
+          </style>
+          <div class="section-title">Color</div>
+          <div class="color-grid" id="color-swatches-container"></div>
+          <div class="section-title" style="margin-top: 4px;">Grosor</div>
+          <div class="size-control">
+            <div class="size-val-preview"><span>Trazo</span><span id="size-label">0.08m</span></div>
+            <input type="range" id="slider-brush-size" class="size-slider" min="0.02" max="0.3" step="0.01" value="0.08">
+          </div>
+        `;
+        document.getElementById('ui-layer').appendChild(panel);
+        this.renderSwatches();
+        this.initEvents();
+      }
+
+      renderSwatches() {
+        const container = document.getElementById('color-swatches-container');
+        container.innerHTML = '';
+        this.paletteColors.forEach((hex) => {
+          const swatch = document.createElement('div');
+          swatch.className = `color-swatch ${hex === this.currentColor ? 'active' : ''}`;
+          swatch.style.backgroundColor = hex;
+          swatch.addEventListener('click', () => {
+            document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            swatch.classList.add('active');
+            this.currentColor = hex;
+          });
+          container.appendChild(swatch);
+        });
+      }
+
+      initEvents() {
+        const slider = document.getElementById('slider-brush-size');
+        const label = document.getElementById('size-label');
+        slider.addEventListener('input', (e) => {
+          this.currentSize = parseFloat(e.target.value);
+          label.innerText = `${this.currentSize.toFixed(2)}m`;
+        });
+      }
+    }
+
+    // ==========================================
+    // 9. MODIFIER BUTTON (Touch UX)
+    // ==========================================
+    class ModifierButton {
+      constructor(tobiApp) {
+        this.app = tobiApp;
+        this.isPressed = false;
+        this.initUI();
+        this.initEvents();
+      }
+
+      initUI() {
+        const container = document.createElement('div');
+        container.id = 'virtual-modifier-container';
+        container.innerHTML = `
+          <style>
+            #virtual-modifier-container { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); pointer-events: auto; z-index: 100; }
+            .mod-btn {
+              width: 56px; height: 56px; border-radius: 50%; background: rgba(30, 30, 30, 0.8); backdrop-filter: blur(12px);
+              border: 2px solid rgba(0, 255, 204, 0.5); color: #00ffcc; font-weight: 800; font-size: 11px; display: flex;
+              align-items: center; justify-content: center; cursor: pointer; user-select: none; box-shadow
